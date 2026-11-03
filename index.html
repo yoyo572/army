@@ -324,6 +324,7 @@ footer.foot a{color:#AFC8FF}
   <a href="#/tools" data-nav="tools"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2h2v2h6V2h2v2h3v18H4V4h3zm11 8H6v10h12zm-9 2h2v2H9zm4 0h2v2h-2zm-4 4h2v2H9z"/></svg>입대 도구</a>
 </div></nav>
 
+<script src="config.js"></script>
 <script>
 /* ───────── 콘텐츠 데이터 (정적, 페이지 내장) ─────────
    정보 기준일 2026-11. 수치·조건은 각 군 모집 공고 기준으로 매년 갱신 필요. */
@@ -335,7 +336,7 @@ const PORTAL = "https://m-recruit.mnd.go.kr";
 const MMA = "https://www.mma.go.kr";
 const MMA_PHONE = "1588-9090";
 
-const DATA = {
+let DATA = {
   meta: {
     baseDate: "2026-11",
     baseDateLabel: "2026년 11월",
@@ -744,6 +745,54 @@ const DATA = {
   servicePeriods: { army: 18, marine: 18, navy: 20, airforce: 21 }
 };
 
+/* ───────── Supabase 연동 ─────────
+   config.js 의 SUPABASE_URL / SUPABASE_ANON_KEY 가 있으면 DB 콘텐츠로 교체합니다.
+   연결 실패·미설정 시에는 위의 내장 DATA 를 그대로 씁니다. (읽기 전용, 사용자 입력은 전송하지 않음) */
+let dataSource = "내장";
+async function loadRemoteData() {
+  const cfg = window.APP_CONFIG || {};
+  if (!cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY) return null;
+  const get = path => fetch(`${cfg.SUPABASE_URL}/rest/v1/${path}`, {
+    headers: { apikey: cfg.SUPABASE_ANON_KEY, Authorization: `Bearer ${cfg.SUPABASE_ANON_KEY}` }
+  }).then(r => { if (!r.ok) throw new Error(`${path}: ${r.status}`); return r.json(); });
+  const [branches, ranks, tracks, specs, rules, content] = await Promise.all([
+    get("branches?select=*&order=sort"),
+    get("ranks?select=*&order=sort"),
+    get("tracks?select=*&order=sort"),
+    get("specialties?select=*&order=sort"),
+    get("diagnosis_rules?select=*&order=sort"),
+    get("site_content?select=*")
+  ]);
+  if (!branches.length) return null;
+  const kv = Object.fromEntries(content.map(c => [c.key, c.value]));
+  const of = (list, b, r) => list.filter(x => x.branch_id === b && x.rank_id === r);
+  return {
+    meta: kv.meta || DATA.meta,
+    commonWelfare: kv.commonWelfare || DATA.commonWelfare,
+    enlistment: kv.enlistment || DATA.enlistment,
+    servicePeriods: Object.fromEntries(branches.map(b => [b.id, b.service_months])),
+    branches: branches.map(b => ({
+      id: b.id, name: b.name, color: b.color, short: b.short, env: b.env, feature: b.feature,
+      termForSpecialty: b.term_for_specialty, officialUrl: b.official_url, phones: b.phones,
+      ...(b.phone_note ? { phoneNote: b.phone_note } : {}),
+      ranks: ranks.filter(r => r.branch_id === b.id).map(r => ({
+        id: r.id, name: r.name, welfare: r.welfare,
+        tracks: of(tracks, b.id, r.id).map(t => ({
+          type: t.type, name: t.name, eligibility: t.eligibility, training: t.training,
+          servicePeriod: t.service_period, benefits: t.benefits, url: t.url, ...(t.phone ? { phone: t.phone } : {})
+        })),
+        specialties: of(specs, b.id, r.id).map(s => s.is_major
+          ? { name: s.name, oneLine: s.one_line, isMajor: true, detail: s.detail, fit: s.fit }
+          : { name: s.name, oneLine: s.one_line, isMajor: false })
+      }))
+    })),
+    diagnosisRules: rules.map(r => ({
+      branch: r.branch_id, rank: r.rank_id, track: r.track_sort, ageMin: r.age_min, ageMax: r.age_max,
+      education: r.education, status: r.status, gender: r.gender
+    }))
+  };
+}
+
 /* ───────── 유틸 ───────── */
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1001,7 +1050,7 @@ function footer() {
     <div class="tri" aria-hidden="true"></div>
     <p class="name">국군장병 모집 통합 안내</p>
     <p><b>${esc(DATA.meta.disclaimer)}</b></p>
-    <p>정보 기준일: ${DATA.meta.baseDateLabel} · ${esc(DATA.meta.finalNote)}</p>
+    <p>정보 기준일: ${DATA.meta.baseDateLabel} · ${esc(DATA.meta.finalNote)} · 데이터: ${dataSource}</p>
     <p>공고 확인·지원 접수: <a href="${PORTAL}" target="_blank" rel="noopener">국방통합모집포털</a> · 병역 일정: <a href="${MMA}" target="_blank" rel="noopener">병무청</a> (${MMA_PHONE})</p>
     <p>로고: 대한민국 국방부 심벌(나무위키 ‘대한민국 국군’ 문서 이미지). 캐릭터: 각 군 마스코트(육군 ‘호국이’, 해군 ‘해돌이’, 공군 ‘하늘이·푸르매’, 해병대 ‘해병이’) — 출처: 병무청 블로그 ‘빛고을병무타운’, 해군·해병대 공식 홈페이지. 분야 아이콘은 자체 제작입니다.</p>
   </footer>`;
@@ -1422,7 +1471,7 @@ window.addEventListener("hashchange", () => {
 });
 lastPath = location.hash;
 // 햄버거 전체 메뉴 (참고 사이트의 드로어)
-$("#drawerList").innerHTML = `
+const buildDrawer = () => $("#drawerList").innerHTML = `
   <li><a href="#/"><span class="dot"></span>홈</a></li>
   <li class="grp">군별 모집 안내</li>
   ${DATA.branches.map(b => `<li style="--c:${b.color}"><a href="#/b/${b.id}/officer"><span class="dot"></span>${esc(b.name)}</a></li>
@@ -1433,6 +1482,7 @@ $("#drawerList").innerHTML = `
   <li class="grp">공식 창구</li>
   <li><a href="${PORTAL}" target="_blank" rel="noopener"><span class="dot"></span>국방통합모집포털 ↗</a></li>
   <li><a href="${MMA}" target="_blank" rel="noopener"><span class="dot"></span>병무청 ↗</a></li>`;
+buildDrawer();
 function setDrawer(open) {
   $("#drawer").classList.toggle("open", open);
   $("#drawer").setAttribute("aria-hidden", String(!open));
@@ -1450,6 +1500,12 @@ $("#bgm").addEventListener("click", () => {
   updateBgmBtn();
 });
 render();
+// 내장 데이터로 먼저 그리고, DB 콘텐츠가 오면 교체해서 다시 그림
+loadRemoteData().then(d => {
+  if (!d) return;
+  DATA = d; dataSource = "Supabase";
+  buildDrawer(); render();
+}).catch(e => console.warn("Supabase 데이터를 불러오지 못해 내장 데이터를 사용합니다.", e));
 </script>
 </body>
 </html>
