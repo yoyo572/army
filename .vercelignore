@@ -1,4 +1,5 @@
 .claude
 supabase
 scripts
+.gitignore
 serve.ps1
